@@ -16,7 +16,9 @@ The result is a single weekly digest a maintainer can act on in minutes: every P
 6. **Cross-repo verdict cache** — keyed on (ecosystem, dependency, target version, latest version, prompt version); identical bumps in other repos are free.
 7. **Weekly digest** — single Markdown page with needs-human items first, org summary, cross-repo rollup, and per-repo action tables; Teams webhook payload ready.
 8. **Append-only audit log** — every verdict recorded with model, prompt version, token counts, and cache status.
-9. **Azure-ready** — Timer-triggered Function wrapper and a documented migration path (`MIGRATION.md`) with no logic changes.
+9. **Token monitoring** — each run reports total tokens consumed (input/output breakdown), Claude API calls, and cache hits directly in the digest and structured logs, making per-run cost visible at a glance.
+10. **Multi-provider LLM** — one config switch runs the same pipeline against the Anthropic API or Claude in Microsoft Foundry (Azure), with no code changes.
+11. **Azure-ready** — Timer-triggered Function wrapper and a documented migration path (`MIGRATION.md`) with no logic changes.
 
 ## Guardrails
 
