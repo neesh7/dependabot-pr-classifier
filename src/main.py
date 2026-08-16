@@ -99,21 +99,52 @@ def main(argv: list[str] | None = None) -> None:
                         help="collect PRs and dump JSON, no classification")
     parser.add_argument("--grouped", action="store_true",
                         help="output grouped by (repo, ecosystem, manifest, dependency)")
+    parser.add_argument("--no-ai", action="store_true",
+                        help="deterministic classification only, zero Claude calls")
     args = parser.parse_args(argv)
 
-    records = collect(load_config())
+    config = load_config()
+    records = collect(config)
     if args.grouped:
         print(json.dumps(group_records(records), indent=2))
-    elif args.collect_only:
+        return
+    if args.collect_only:
         print(json.dumps([r.model_dump() for r in records], indent=2))
-    else:
-        registry, osv = RegistryClient(), OSVClient()
-        results = classify(records, registry.latest_stable, osv.query_batch)
-        counts: dict[str, int] = {}
-        for c in results:
-            counts[c.status] = counts.get(c.status, 0) + 1
-        print(f"classified: {counts}", file=sys.stderr)
-        print(json.dumps([c.model_dump() for c in results], indent=2))
+        return
+
+    registry, osv = RegistryClient(), OSVClient()
+    results = classify(records, registry.latest_stable, osv.query_batch)
+    counts: dict[str, int] = {}
+    for c in results:
+        counts[c.status] = counts.get(c.status, 0) + 1
+    print(f"classified: {counts}", file=sys.stderr)
+
+    if not args.no_ai:
+        run_ai(results, config)
+    print(json.dumps([c.model_dump() for c in results], indent=2))
+
+
+def run_ai(results: list, config: Config) -> None:
+    """Attach Claude verdicts to STALE_CANDIDATEs, via the cross-repo cache."""
+    stale = [c for c in results if c.status == "STALE_CANDIDATE"]
+    if not stale:
+        return
+    from src.llm.llm_client import LLMClient
+    from src.storage.verdict_cache import VerdictCache
+
+    cache = VerdictCache(config.verdict_cache_path)
+    llm = LLMClient(config)
+    hits = 0
+    for cp in stale:
+        key = VerdictCache.key_for(cp)
+        if cached := cache.get(key):
+            cp.verdict, cp.verdict_meta = cached
+            hits += 1
+        else:
+            cp.verdict, cp.verdict_meta = llm.analyze(cp)
+            cache.put(key, cp.verdict, cp.verdict_meta)
+    print(f"AI: {len(stale)} stale PRs, {hits} cache hits, {llm.api_calls} API calls, "
+          f"{llm.input_tokens} in / {llm.output_tokens} out tokens", file=sys.stderr)
 
 
 if __name__ == "__main__":

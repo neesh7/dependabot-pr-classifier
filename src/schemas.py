@@ -71,13 +71,26 @@ class DuplicateOverlap(BaseModel):
     newer_pr: int
 
 
+class VerdictMeta(BaseModel):
+    """Provenance for one AI verdict (goes to the audit log)."""
+
+    model: str
+    prompt_version: str
+    cache_hit: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tool_iterations: int = 0
+
+
 class ClassifiedPR(BaseModel):
-    """Deterministic classifier output for one PR."""
+    """Deterministic classifier output for one PR; verdict added for stale ones."""
 
     record: PRRecord
     status: Literal["DUPLICATE", "STALE_CANDIDATE", "CURRENT", "UNKNOWN"]
     duplicate_overlaps: list[DuplicateOverlap] = []  # deps also bumped by a newer PR
     assessments: list[UpdateAssessment] = []
+    verdict: "Verdict | None" = None          # only for STALE_CANDIDATE
+    verdict_meta: VerdictMeta | None = None
 
 
 class Verdict(BaseModel):
@@ -89,3 +102,6 @@ class Verdict(BaseModel):
     breaking_changes_in_gap: list[str] = []
     additional_cves_fixed: list[str] = []
     reasoning: str = Field(description="2-3 sentences max")
+
+
+ClassifiedPR.model_rebuild()  # resolve the forward ref to Verdict
