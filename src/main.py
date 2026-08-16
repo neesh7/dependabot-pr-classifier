@@ -15,6 +15,7 @@ from src.classifier.registry_client import RegistryClient
 from src.collector import pr_parser
 from src.collector.github_client import fetch_dependabot_prs, make_client
 from src.config import Config, load_config
+from src.log import log_event
 from src.schemas import DependencyUpdate, PRRecord
 
 
@@ -73,7 +74,7 @@ def collect(config: Config) -> list[PRRecord]:
         for repo in config.repos:
             prs = fetch_dependabot_prs(client, repo)
             records.extend(build_record(repo, pr) for pr in prs)
-            print(f"{repo}: {len(prs)} open Dependabot PRs", file=sys.stderr)
+            log_event("collected", repo=repo, open_prs=len(prs))
     return records
 
 
@@ -93,42 +94,47 @@ def group_records(records: list[PRRecord]) -> dict:
     return grouped
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Dependabot AI triage")
-    parser.add_argument("--collect-only", action="store_true",
-                        help="collect PRs and dump JSON, no classification")
-    parser.add_argument("--grouped", action="store_true",
-                        help="output grouped by (repo, ecosystem, manifest, dependency)")
-    parser.add_argument("--no-ai", action="store_true",
-                        help="deterministic classification only, zero Claude calls")
-    args = parser.parse_args(argv)
+def run(config: Config | None = None, no_ai: bool = False) -> str:
+    """Full pipeline: collect → classify → AI verdicts → digest + audit log.
 
-    config = load_config()
+    Returns the digest Markdown. This is what the Azure Function timer calls.
+    """
+    from pathlib import Path
+
+    from src.report.digest import post_to_teams, render_digest
+    from src.storage.audit_log import AuditLog
+
+    config = config or load_config()
     records = collect(config)
-    if args.grouped:
-        print(json.dumps(group_records(records), indent=2))
-        return
-    if args.collect_only:
-        print(json.dumps([r.model_dump() for r in records], indent=2))
-        return
-
     registry, osv = RegistryClient(), OSVClient()
     results = classify(records, registry.latest_stable, osv.query_batch)
     counts: dict[str, int] = {}
     for c in results:
         counts[c.status] = counts.get(c.status, 0) + 1
-    print(f"classified: {counts}", file=sys.stderr)
+    log_event("classified", **counts)
 
-    if not args.no_ai:
-        run_ai(results, config)
-    print(json.dumps([c.model_dump() for c in results], indent=2))
+    ai_stats = "" if no_ai else run_ai(results, config)
+
+    audit = AuditLog(config.audit_log_path)
+    for cp in results:
+        audit.append(cp)
+
+    digest = render_digest(results, ai_stats)
+    out = Path(config.digest_output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(digest, encoding="utf-8")
+    log_event("digest_written", path=str(out), prs=len(results))
+    if config.teams_webhook_url:
+        post_to_teams(config.teams_webhook_url, digest)
+        log_event("teams_posted")
+    return digest
 
 
-def run_ai(results: list, config: Config) -> None:
+def run_ai(results: list, config: Config) -> str:
     """Attach Claude verdicts to STALE_CANDIDATEs, via the cross-repo cache."""
     stale = [c for c in results if c.status == "STALE_CANDIDATE"]
     if not stale:
-        return
+        return "no stale PRs, 0 calls"
     from src.llm.llm_client import LLMClient
     from src.storage.verdict_cache import VerdictCache
 
@@ -143,8 +149,36 @@ def run_ai(results: list, config: Config) -> None:
         else:
             cp.verdict, cp.verdict_meta = llm.analyze(cp)
             cache.put(key, cp.verdict, cp.verdict_meta)
-    print(f"AI: {len(stale)} stale PRs, {hits} cache hits, {llm.api_calls} API calls, "
-          f"{llm.input_tokens} in / {llm.output_tokens} out tokens", file=sys.stderr)
+    stats = (f"{len(stale)} stale analyzed, {hits} cache hits, {llm.api_calls} API calls, "
+             f"{llm.input_tokens + llm.output_tokens} tokens")
+    log_event("ai_stage", stale=len(stale), cache_hits=hits, api_calls=llm.api_calls,
+              input_tokens=llm.input_tokens, output_tokens=llm.output_tokens)
+    return stats
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Dependabot AI triage")
+    parser.add_argument("--collect-only", action="store_true",
+                        help="collect PRs and dump JSON, no classification")
+    parser.add_argument("--grouped", action="store_true",
+                        help="output grouped by (repo, ecosystem, manifest, dependency)")
+    parser.add_argument("--no-ai", action="store_true",
+                        help="deterministic classification only, zero Claude calls")
+    args = parser.parse_args(argv)
+
+    if hasattr(sys.stdout, "reconfigure"):  # Windows consoles default to cp1252
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    if args.grouped or args.collect_only:
+        records = collect(load_config())
+        if args.grouped:
+            print(json.dumps(group_records(records), indent=2))
+        else:
+            print(json.dumps([r.model_dump() for r in records], indent=2))
+        return
+
+    digest = run(no_ai=args.no_ai)
+    print(digest)
 
 
 if __name__ == "__main__":
