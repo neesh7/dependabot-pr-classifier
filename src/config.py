@@ -13,6 +13,8 @@ class Config:
     repos: list[str]
     llm_provider: str = "anthropic"
     anthropic_api_key: str = ""
+    foundry_resource: str = ""  # Microsoft Foundry resource name
+    foundry_api_key: str = ""   # blank in client env -> Entra ID
     model_default: str = "claude-haiku-4-5-20251001"
     model_escalation: str = "claude-sonnet-5"
     max_llm_calls_per_run: int = 100
@@ -37,6 +39,8 @@ def load_config() -> Config:
         repos=repos,
         llm_provider=os.getenv("LLM_PROVIDER", "anthropic"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        foundry_resource=os.getenv("FOUNDRY_RESOURCE", ""),
+        foundry_api_key=os.getenv("FOUNDRY_API_KEY", ""),
         model_default=os.getenv("LLM_MODEL_DEFAULT", Config.model_default),
         model_escalation=os.getenv("LLM_MODEL_ESCALATION", Config.model_escalation),
         max_llm_calls_per_run=int(os.getenv("LLM_MAX_CALLS_PER_RUN", "100")),

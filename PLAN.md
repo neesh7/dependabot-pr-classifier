@@ -222,6 +222,48 @@ The core AI work. Only `STALE_CANDIDATE`s reach this stage.
 
 ---
 
+## Phase 6 — Private registry / Azure Artifacts feed support (planned, not built)
+
+**Problem:** "stale" is currently defined against public registries (PyPI/npm/NuGet).
+If a client's repos resolve from an Azure Artifacts feed, that definition breaks two ways:
+1. **False staleness** — upstream has a newer version but the curated feed hasn't approved
+   it; recommending `@dependabot recreate` to a version the feed can't resolve produces a
+   broken PR (confidently-wrong advice = trust killer).
+2. **Internal packages invisible** — private packages don't exist on public registries, so
+   lookups return None and those PRs degrade to UNKNOWN.
+
+**Why it's cheap:** `registry_client.py` is already the single lookup seam, and Azure
+Artifacts speaks the same protocols (NuGet v3 flat container, npm registry API) — mostly
+base URL + auth. Exception: pip on Azure Artifacts is PEP 503 simple-index (HTML), not
+PyPI's JSON API — a new parse path; build only if the client needs pip.
+
+**Design decisions (settled):**
+- Config: `registries.yml` (or env equivalent) mapping ecosystem → `{source: public |
+  azure-feed, url, auth}`; a bare feed name is insufficient (Azure needs org + project +
+  feed, per-ecosystem endpoints differ). Optionally overridable per repo.
+- Auth: PAT basic auth locally → Entra ID token at client (same pattern as the GitHub
+  swap in MIGRATION.md).
+- Feed = source of truth for verdicts/actions. Optional upstream comparison surfaces as
+  an informational digest line ("newer upstream, not yet in feed — flag to platform
+  team") — turns the limitation into a curation signal.
+- Verdict cache key MUST gain the registry-source identity: two repos on different feeds
+  can have different "latest" for the same package; today's key would leak verdicts
+  across feeds.
+- Don't assume feed ≈ public: upstream-proxying feeds mirror latest automatically, but
+  curated feeds lag deliberately.
+
+**Scope for first cut:**
+- [ ] `registries.yml` config + loader (fail fast on bad mapping)
+- [ ] NuGet + npm Azure Artifacts feed lookups (same protocol, feed base URL + auth)
+- [ ] Cache key includes registry source
+- [ ] Digest line for "newer upstream, not in feed"
+- [ ] Hold pip simple-index parsing until a client repo needs it
+
+**When:** before client migration — pairs with the Phase 0 question "which ecosystems do
+the 30 repos actually use"; add "and from which feeds?" to that question.
+
+---
+
 ## v2 / v3 roadmap (for the design doc, not for building now)
 
 - **v2:** Actuator — auto-comment `@dependabot recreate` on SUPERSEDED + close DUPLICATEs, gated per-repo, enabled only after audit log shows verdict precision over 4–6 weeks

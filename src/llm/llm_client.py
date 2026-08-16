@@ -32,9 +32,15 @@ class LLMClient:
                 sys.exit("ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic")
             self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
         elif config.llm_provider == "foundry":
-            raise NotImplementedError(
-                "Foundry provider is wired at client migration: same Messages API, "
-                "Foundry base_url + Entra ID token (see MIGRATION.md)")
+            # Claude in Microsoft Foundry — same Messages API surface.
+            # Local testing: resource + API key. Client env: Entra ID managed
+            # identity via azure_ad_token_provider (see MIGRATION.md).
+            if not config.foundry_resource:
+                sys.exit("FOUNDRY_RESOURCE is required when LLM_PROVIDER=foundry")
+            self._client = anthropic.AnthropicFoundry(
+                resource=config.foundry_resource,
+                api_key=config.foundry_api_key or None,
+            )
         else:
             sys.exit(f"Unknown LLM_PROVIDER: {config.llm_provider}")
         self._config = config
