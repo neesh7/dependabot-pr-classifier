@@ -1,0 +1,11 @@
+{
+  "title": "Bump StackExchange.Redis from 2.8.16 to 3.1.13",
+  "body": "Updated [StackExchange.Redis](https://github.com/StackExchange/StackExchange.Redis/) from 2.8.16 to 3.1.13.\n\n<details>\n<summary>Release notes</summary>\n\n_Sourced from [StackExchange.Redis's releases](https://github.com/StackExchange/StackExchange.Redis//releases)._\n\nNo release notes found for this version range.\n\nCommits viewable in [compare view](https://github.com/StackExchange/StackExchange.Redis//commits).\n</details>\n\n[![Dependabot compatibility score](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=StackExchange.Redis&package-manager=nuget&previous-version=2.8.16&new-version=3.1.13)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself. You can also trigger a rebase manually by commenting `@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits that have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all of the ignore conditions of the specified dependency\n- `@dependabot ignore this major version` will close this PR and stop Dependabot creating any more for this major version (unless you reopen the PR or upgrade to it yourself)\n- `@dependabot ignore this minor version` will close this PR and stop Dependabot creating any more for this minor version (unless you reopen the PR or upgrade to it yourself)\n- `@dependabot ignore this dependency` will close this PR and stop Dependabot creating any more for this dependency (unless you reopen the PR or upgrade to it yourself)\n\n\n</details>",
+  "labels": [
+    "dependencies",
+    ".NET"
+  ],
+  "files": [
+    "worker/Worker.csproj"
+  ]
+}

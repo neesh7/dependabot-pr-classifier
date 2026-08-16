@@ -1,0 +1,7 @@
+anthropic
+pydantic>=2
+httpx
+python-dotenv
+tenacity
+jinja2
+pytest

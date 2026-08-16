@@ -1,0 +1,66 @@
+"""Pydantic models: the data contracts between pipeline stages.
+
+DependencyUpdate — one dependency bump (a grouped PR has several)
+ParsedTitle      — what pr_parser extracts from a PR title
+PRRecord         — collector output (one open Dependabot PR, fully structured)
+Verdict          — Claude's structured answer for a STALE_CANDIDATE (Phase 3)
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, Field, ValidationError  # noqa: F401  (re-exported)
+
+
+class DependencyUpdate(BaseModel):
+    dependency: str
+    from_ver: str | None = None
+    to_ver: str | None = None
+
+
+class ParsedTitle(BaseModel):
+    kind: Literal["bump", "requirement", "group", "unknown"]
+    dependency: str | None = None
+    from_ver: str | None = None
+    to_ver: str | None = None
+    directory: str | None = None  # the "in /frontend" suffix, when present
+    group_name: str | None = None
+    update_count: int | None = None
+
+
+class PRRecord(BaseModel):
+    repo: str
+    pr_number: int
+    title: str
+    url: str
+    base_ref: str
+    age_days: int = Field(ge=0)
+    mergeable: Literal["MERGEABLE", "CONFLICTING", "UNKNOWN"]
+    ci_status: Literal["SUCCESS", "FAILURE", "PENDING", "ERROR", "EXPECTED", "UNKNOWN"]
+    labels: list[str] = []
+    is_security: bool = False
+    is_grouped: bool = False
+    files: list[str] = []
+    # parsed fields
+    ecosystem: str | None = None
+    manifest_path: str | None = None
+    dependency: str | None = None  # None for grouped PRs — see `updates`
+    from_ver: str | None = None
+    to_ver: str | None = None
+    group_name: str | None = None
+    updates: list[DependencyUpdate] = []  # every dep in the PR (1 for plain bumps)
+    # body extracts
+    release_notes_excerpt: str = ""
+    changelog_links: list[str] = []
+    compatibility_score_url: str | None = None
+    body_excerpt: str = ""
+
+
+class Verdict(BaseModel):
+    """Schema Claude must return. Parsed with model_validate_json; one retry on failure."""
+
+    verdict: Literal["SUPERSEDED", "STILL_VALID", "NEEDS_HUMAN"]
+    recommended_action: str  # "recreate to 4.18.2" | "merge as-is" | "manual review"
+    risk_of_newer_version: Literal["low", "medium", "high"]
+    breaking_changes_in_gap: list[str] = []
+    additional_cves_fixed: list[str] = []
+    reasoning: str = Field(description="2-3 sentences max")
