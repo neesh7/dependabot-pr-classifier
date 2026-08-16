@@ -16,7 +16,7 @@ from src.collector import pr_parser
 from src.collector.github_client import fetch_dependabot_prs, make_client
 from src.config import Config, load_config
 from src.log import log_event
-from src.schemas import DependencyUpdate, PRRecord
+from src.schemas import DependencyUpdate, PRRecord, RunStats
 
 
 def _age_days(created_at: str) -> int:
@@ -113,13 +113,13 @@ def run(config: Config | None = None, no_ai: bool = False) -> str:
         counts[c.status] = counts.get(c.status, 0) + 1
     log_event("classified", **counts)
 
-    ai_stats = "" if no_ai else run_ai(results, config)
+    stats = None if no_ai else run_ai(results, config)
 
     audit = AuditLog(config.audit_log_path)
     for cp in results:
         audit.append(cp)
 
-    digest = render_digest(results, ai_stats)
+    digest = render_digest(results, stats)
     out = Path(config.digest_output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(digest, encoding="utf-8")
@@ -130,11 +130,11 @@ def run(config: Config | None = None, no_ai: bool = False) -> str:
     return digest
 
 
-def run_ai(results: list, config: Config) -> str:
+def run_ai(results: list, config: Config) -> RunStats:
     """Attach Claude verdicts to STALE_CANDIDATEs, via the cross-repo cache."""
     stale = [c for c in results if c.status == "STALE_CANDIDATE"]
     if not stale:
-        return "no stale PRs, 0 calls"
+        return RunStats()
     from src.llm.llm_client import LLMClient
     from src.storage.verdict_cache import VerdictCache
 
@@ -149,10 +149,12 @@ def run_ai(results: list, config: Config) -> str:
         else:
             cp.verdict, cp.verdict_meta = llm.analyze(cp)
             cache.put(key, cp.verdict, cp.verdict_meta)
-    stats = (f"{len(stale)} stale analyzed, {hits} cache hits, {llm.api_calls} API calls, "
-             f"{llm.input_tokens + llm.output_tokens} tokens")
+    stats = RunStats(stale_analyzed=len(stale), cache_hits=hits, api_calls=llm.api_calls,
+                     input_tokens=llm.input_tokens, output_tokens=llm.output_tokens,
+                     model=config.model_default)
     log_event("ai_stage", stale=len(stale), cache_hits=hits, api_calls=llm.api_calls,
-              input_tokens=llm.input_tokens, output_tokens=llm.output_tokens)
+              input_tokens=llm.input_tokens, output_tokens=llm.output_tokens,
+              total_tokens=stats.total_tokens)
     return stats
 
 

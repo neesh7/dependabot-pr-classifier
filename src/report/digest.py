@@ -9,7 +9,7 @@ from datetime import date
 import httpx
 from jinja2 import Template
 
-from src.schemas import ClassifiedPR
+from src.schemas import ClassifiedPR, RunStats
 
 _TEMPLATE = Template("""\
 # Dependabot Triage Digest — {{ today }}
@@ -24,7 +24,10 @@ Nothing needs a human this week.
 - Repos scanned: **{{ n_repos }}** | Open Dependabot PRs: **{{ n_prs }}**
 - Stale: **{{ counts.get("STALE_CANDIDATE", 0) }}** | Duplicates: **{{ counts.get("DUPLICATE", 0) }}** | Current: **{{ counts.get("CURRENT", 0) }}** | Unknown: **{{ counts.get("UNKNOWN", 0) }}**
 - Oldest open PR: **{{ oldest_days }} days**
-{% if ai_stats %}- AI: {{ ai_stats }}
+{% if stats %}
+## Token usage
+- Total tokens this run: **{{ "{:,}".format(stats.total_tokens) }}** ({{ "{:,}".format(stats.input_tokens) }} in / {{ "{:,}".format(stats.output_tokens) }} out){% if stats.model %} on `{{ stats.model }}`{% endif %}
+- Claude API calls: **{{ stats.api_calls }}** | Stale PRs analyzed: **{{ stats.stale_analyzed }}** | Cache hits: **{{ stats.cache_hits }}** (reused prior verdicts, 0 tokens)
 {% endif %}
 ## Cross-repo rollup
 {% for line in rollup -%}
@@ -96,7 +99,7 @@ def _rollup(results: list[ClassifiedPR], n_repos: int) -> list[str]:
     return lines
 
 
-def render_digest(results: list[ClassifiedPR], ai_stats: str = "") -> str:
+def render_digest(results: list[ClassifiedPR], stats: RunStats | None = None) -> str:
     repos = sorted({cp.record.repo for cp in results})
     counts: dict[str, int] = {}
     by_repo: dict[str, list] = {}
@@ -121,7 +124,7 @@ def render_digest(results: list[ClassifiedPR], ai_stats: str = "") -> str:
         n_prs=len(results),
         counts=counts,
         oldest_days=max((cp.record.age_days for cp in results), default=0),
-        ai_stats=ai_stats,
+        stats=stats,
         rollup=_rollup(results, len(repos)),
         by_repo=by_repo,
     )

@@ -1,8 +1,8 @@
 import json
 
 from src.report.digest import action_for, render_digest, to_teams_payload
-from src.schemas import (ClassifiedPR, DuplicateOverlap, UpdateAssessment, Verdict,
-                         VerdictMeta)
+from src.schemas import (ClassifiedPR, DuplicateOverlap, RunStats, UpdateAssessment,
+                         Verdict, VerdictMeta)
 from src.storage.audit_log import AuditLog
 from tests.test_deterministic import make_record
 
@@ -54,7 +54,9 @@ def test_digest_sections_and_rows():
         classified(12, "left-pad", "1.0.0", "STALE_CANDIDATE", latest="2.0.0",
                    verdict=v("NEEDS_HUMAN", "manual review", "medium")),
     ]
-    md = render_digest(results, ai_stats="3 analyzed")
+    stats = RunStats(stale_analyzed=2, cache_hits=0, api_calls=3,
+                     input_tokens=8000, output_tokens=1233, model="claude-opus-5")
+    md = render_digest(results, stats)
     # needs-human comes before the summary, summary before tables
     assert md.index("## Needs human") < md.index("## Summary") < md.index("## Actions by repo")
     assert "o/r#12" in md.split("## Summary")[0]        # needs-human links the right PR
@@ -62,7 +64,17 @@ def test_digest_sections_and_rows():
     assert "1.6.0 → 1.7.2" in md
     assert "`@dependabot recreate` — recreate to 1.7.2" in md
     assert "Open Dependabot PRs: **3**" in md
-    assert "3 analyzed" in md
+    # token usage section
+    assert "## Token usage" in md
+    assert "Total tokens this run: **9,233**" in md
+    assert "8,000 in / 1,233 out" in md
+    assert "claude-opus-5" in md
+
+
+def test_digest_omits_token_usage_without_stats():
+    results = [classified(11, "lodash", "4.17.21", "CURRENT")]
+    md = render_digest(results)  # no-ai run
+    assert "## Token usage" not in md
 
 
 def test_cross_repo_rollup_counts_repos():

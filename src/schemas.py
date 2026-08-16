@@ -82,6 +82,21 @@ class VerdictMeta(BaseModel):
     tool_iterations: int = 0
 
 
+class RunStats(BaseModel):
+    """Per-run AI accounting, surfaced in the digest for token/cost monitoring."""
+
+    stale_analyzed: int = 0
+    cache_hits: int = 0       # verdicts reused from cache (cost 0 tokens this run)
+    api_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = ""
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
 class ClassifiedPR(BaseModel):
     """Deterministic classifier output for one PR; verdict added for stale ones."""
 
