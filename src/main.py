@@ -1,6 +1,7 @@
 """Orchestrator: collect → (classify → analyze → report, later phases).
 
-Usage: python -m src.main --collect-only [--grouped]
+Usage: python -m src.main [--collect-only] [--grouped]
+Default (no flags): collect + deterministic classification.
 """
 
 import argparse
@@ -8,6 +9,9 @@ import json
 import sys
 from datetime import datetime, timezone
 
+from src.classifier.deterministic import classify
+from src.classifier.osv_client import OSVClient
+from src.classifier.registry_client import RegistryClient
 from src.collector import pr_parser
 from src.collector.github_client import fetch_dependabot_prs, make_client
 from src.config import Config, load_config
@@ -100,8 +104,16 @@ def main(argv: list[str] | None = None) -> None:
     records = collect(load_config())
     if args.grouped:
         print(json.dumps(group_records(records), indent=2))
-    else:
+    elif args.collect_only:
         print(json.dumps([r.model_dump() for r in records], indent=2))
+    else:
+        registry, osv = RegistryClient(), OSVClient()
+        results = classify(records, registry.latest_stable, osv.query_batch)
+        counts: dict[str, int] = {}
+        for c in results:
+            counts[c.status] = counts.get(c.status, 0) + 1
+        print(f"classified: {counts}", file=sys.stderr)
+        print(json.dumps([c.model_dump() for c in results], indent=2))
 
 
 if __name__ == "__main__":

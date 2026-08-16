@@ -55,6 +55,31 @@ class PRRecord(BaseModel):
     body_excerpt: str = ""
 
 
+class UpdateAssessment(BaseModel):
+    """Staleness check for one dependency bump inside a PR."""
+
+    dependency: str
+    from_ver: str | None = None
+    to_ver: str | None = None
+    latest_ver: str | None = None  # None = registry lookup unavailable
+    is_behind: bool = False        # latest_ver > to_ver
+    target_cves: list[str] = []    # known vulns in the PR's TARGET version
+
+
+class DuplicateOverlap(BaseModel):
+    dependency: str
+    newer_pr: int
+
+
+class ClassifiedPR(BaseModel):
+    """Deterministic classifier output for one PR."""
+
+    record: PRRecord
+    status: Literal["DUPLICATE", "STALE_CANDIDATE", "CURRENT", "UNKNOWN"]
+    duplicate_overlaps: list[DuplicateOverlap] = []  # deps also bumped by a newer PR
+    assessments: list[UpdateAssessment] = []
+
+
 class Verdict(BaseModel):
     """Schema Claude must return. Parsed with model_validate_json; one retry on failure."""
 
