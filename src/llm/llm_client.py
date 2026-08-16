@@ -20,6 +20,13 @@ from src.schemas import ClassifiedPR, Verdict, VerdictMeta
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
+def _foundry_resource_from(endpoint: str) -> str | None:
+    """Resource name from any Foundry portal URL, e.g.
+    https://my-res.services.ai.azure.com/api/projects/x -> my-res"""
+    m = re.match(r"https?://([^./]+)\.services\.ai\.azure\.com", endpoint.strip())
+    return m.group(1) if m else None
+
+
 def _needs_human(reason: str) -> Verdict:
     return Verdict(verdict="NEEDS_HUMAN", recommended_action="manual review",
                    risk_of_newer_version="medium", reasoning=reason)
@@ -35,10 +42,11 @@ class LLMClient:
             # Claude in Microsoft Foundry — same Messages API surface.
             # Local testing: resource + API key. Client env: Entra ID managed
             # identity via azure_ad_token_provider (see MIGRATION.md).
-            if not config.foundry_resource:
-                sys.exit("FOUNDRY_RESOURCE is required when LLM_PROVIDER=foundry")
+            resource = config.foundry_resource or _foundry_resource_from(config.foundry_endpoint)
+            if not resource:
+                sys.exit("Set FOUNDRY_ENDPOINT (or FOUNDRY_RESOURCE) when LLM_PROVIDER=foundry")
             self._client = anthropic.AnthropicFoundry(
-                resource=config.foundry_resource,
+                resource=resource,
                 api_key=config.foundry_api_key or None,
             )
         else:
