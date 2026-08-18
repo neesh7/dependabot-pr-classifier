@@ -35,6 +35,53 @@ def test_major_gap_escalates(monkeypatch):
                                             grouped=True)) == "sonnet"
 
 
+# ── Foundry auth wiring (no network: construction only) ───────────────────
+
+def _foundry_config(**over):
+    from src.config import Config
+    base = dict(github_token="x", repos=["o/r"], llm_provider="foundry",
+                foundry_endpoint="https://my-res.services.ai.azure.com/api/projects/p")
+    return Config(**{**base, **over})
+
+
+def test_foundry_uses_api_key_and_never_asks_for_a_token(monkeypatch):
+    from src.llm import llm_client
+    monkeypatch.setattr(llm_client, "_entra_token_provider",
+                        lambda scope: pytest.fail("should not need Entra ID with a key"))
+    llm = llm_client.LLMClient(_foundry_config(foundry_api_key="k"),
+                               executor=object())
+    assert llm._client.api_key == "k"
+    assert llm._client._azure_ad_token_provider is None
+    assert "my-res.services.ai.azure.com" in str(llm._client.base_url)
+
+
+def test_blank_foundry_key_falls_back_to_entra_id(monkeypatch):
+    from src.llm import llm_client
+    asked = []
+    monkeypatch.setattr(llm_client, "_entra_token_provider",
+                        lambda scope: asked.append(scope) or (lambda: "tok"))
+    llm = llm_client.LLMClient(_foundry_config(), executor=object())
+    assert asked == ["https://cognitiveservices.azure.com/.default"]  # default scope
+    assert llm._client.api_key is None          # mutually exclusive with the provider
+    assert llm._client._azure_ad_token_provider() == "tok"
+
+
+def test_entra_scope_is_overridable(monkeypatch):
+    from src.llm import llm_client
+    asked = []
+    monkeypatch.setattr(llm_client, "_entra_token_provider",
+                        lambda scope: asked.append(scope) or (lambda: "tok"))
+    llm_client.LLMClient(_foundry_config(foundry_token_scope="https://custom/.default"),
+                         executor=object())
+    assert asked == ["https://custom/.default"]
+
+
+def test_foundry_without_resource_aborts():
+    from src.llm.llm_client import LLMClient
+    with pytest.raises(SystemExit):
+        LLMClient(_foundry_config(foundry_endpoint="not-a-foundry-url"), executor=object())
+
+
 # ── verdict cache ─────────────────────────────────────────────────────────
 
 def test_cache_round_trip(tmp_path):

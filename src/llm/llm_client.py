@@ -1,12 +1,13 @@
 """THE abstraction boundary for Claude. Nothing else imports the anthropic SDK.
 
 Provider switch: LLM_PROVIDER=anthropic (local) | foundry (client env — same
-Messages API via Foundry base_url + Entra ID token; filled in at migration).
+Messages API against a Foundry resource, authenticated by key or Entra ID).
 """
 
 import json
 import re
 import sys
+from collections.abc import Callable
 
 import anthropic
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -27,6 +28,20 @@ def _foundry_resource_from(endpoint: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _entra_token_provider(scope: str) -> Callable[[], str]:
+    """Keyless Foundry auth: managed identity in Azure, az login / env vars locally.
+
+    The SDK invokes this on every request, so DefaultAzureCredential handles the
+    caching and refresh. Imported lazily — azure-identity is only needed keyless.
+    """
+    try:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    except ImportError:
+        sys.exit("Keyless Foundry auth needs azure-identity (pip install azure-identity), "
+                 "or set FOUNDRY_API_KEY")
+    return get_bearer_token_provider(DefaultAzureCredential(), scope)
+
+
 def _needs_human(reason: str) -> Verdict:
     return Verdict(verdict="NEEDS_HUMAN", recommended_action="manual review",
                    risk_of_newer_version="medium", reasoning=reason)
@@ -40,14 +55,17 @@ class LLMClient:
             self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
         elif config.llm_provider == "foundry":
             # Claude in Microsoft Foundry — same Messages API surface.
-            # Local testing: resource + API key. Client env: Entra ID managed
-            # identity via azure_ad_token_provider (see MIGRATION.md).
+            # Key locally; blank key -> Entra ID managed identity (see MIGRATION.md).
             resource = config.foundry_resource or _foundry_resource_from(config.foundry_endpoint)
             if not resource:
                 sys.exit("Set FOUNDRY_ENDPOINT (or FOUNDRY_RESOURCE) when LLM_PROVIDER=foundry")
+            key = config.foundry_api_key or None
             self._client = anthropic.AnthropicFoundry(
                 resource=resource,
-                api_key=config.foundry_api_key or None,
+                api_key=key,
+                # mutually exclusive with api_key — pass exactly one
+                azure_ad_token_provider=(None if key else
+                                         _entra_token_provider(config.foundry_token_scope)),
             )
         else:
             sys.exit(f"Unknown LLM_PROVIDER: {config.llm_provider}")

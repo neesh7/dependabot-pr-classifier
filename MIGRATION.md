@@ -7,13 +7,28 @@ boundary. The only module that touches the Anthropic SDK is `src/llm/llm_client.
 
 | Local (build env)              | Client env                                            | Where to change |
 |--------------------------------|-------------------------------------------------------|-----------------|
-| Anthropic API + API key        | Claude in Microsoft Foundry (Azure-hosted, GA)        | `llm_client.py` `LLM_PROVIDER=foundry` branch: same Messages API, Foundry base_url + Entra ID token (fill exact constructor from MS docs) |
-| API key in `.env`              | Entra ID managed identity / Key Vault                 | `config.py` reads env; Function App settings reference Key Vault secrets |
+| Anthropic API + API key        | Claude in Microsoft Foundry (Azure-hosted, GA)        | Done: set `LLM_PROVIDER=foundry` + `FOUNDRY_ENDPOINT`. Same Messages API via `AnthropicFoundry` |
+| API key in `.env`              | Entra ID managed identity / Key Vault                 | Done: leave `FOUNDRY_API_KEY` blank → `DefaultAzureCredential` bearer token per request. Assign the Function App's managed identity **Cognitive Services User** on the Foundry resource |
 | GitHub PAT (classic, `repo`)   | GitHub App, org-installed (PRs: read, contents: read) | `github_client.py` auth header; App token minting via installation token |
 | `python -m src.main` / cron    | Azure Function, Timer trigger (weekly)                | `function_app/` already wraps `src.main.run()` — deploy as-is |
 | Local JSON audit log + cache   | Azure Table Storage                                   | `storage/audit_log.py` + `storage/verdict_cache.py`: swap file I/O for Table SDK, same interfaces |
 | Markdown file output           | Teams incoming webhook                                | already wired: set `TEAMS_WEBHOOK_URL` |
 | Console JSON logs (`log.py`)   | Application Insights                                  | Functions runtime forwards stderr/logging automatically |
+
+## Foundry authentication
+
+Two mutually exclusive modes, chosen by whether `FOUNDRY_API_KEY` is set:
+
+| `FOUNDRY_API_KEY` | Auth | Use |
+|---|---|---|
+| set | resource API key | local testing |
+| blank | Entra ID via `DefaultAzureCredential` | client env (managed identity), and `az login` locally |
+
+Keyless requires `azure-identity` (in `requirements.txt`); the import is lazy, so
+key-based runs never need it. The token provider is called on every request and the
+credential handles caching/refresh. Scope defaults to
+`https://cognitiveservices.azure.com/.default` — override with `FOUNDRY_TOKEN_SCOPE`
+only for sovereign clouds.
 
 ## Model routing
 

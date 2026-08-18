@@ -15,7 +15,8 @@ class Config:
     anthropic_api_key: str = ""
     foundry_resource: str = ""  # Microsoft Foundry resource name (or set foundry_endpoint)
     foundry_endpoint: str = ""  # any portal endpoint URL; resource host is derived
-    foundry_api_key: str = ""   # blank in client env -> Entra ID
+    foundry_api_key: str = ""   # blank -> Entra ID (managed identity / az login)
+    foundry_token_scope: str = "https://cognitiveservices.azure.com/.default"
     model_default: str = "claude-haiku-4-5-20251001"
     model_escalation: str = "claude-sonnet-5"
     max_llm_calls_per_run: int = 100
@@ -43,6 +44,7 @@ def load_config() -> Config:
         foundry_resource=os.getenv("FOUNDRY_RESOURCE", ""),
         foundry_endpoint=os.getenv("FOUNDRY_ENDPOINT", ""),
         foundry_api_key=os.getenv("FOUNDRY_API_KEY", ""),
+        foundry_token_scope=os.getenv("FOUNDRY_TOKEN_SCOPE", Config.foundry_token_scope),
         model_default=os.getenv("LLM_MODEL_DEFAULT", Config.model_default),
         model_escalation=os.getenv("LLM_MODEL_ESCALATION", Config.model_escalation),
         max_llm_calls_per_run=int(os.getenv("LLM_MAX_CALLS_PER_RUN", "100")),
