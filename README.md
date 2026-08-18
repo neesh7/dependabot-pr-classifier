@@ -17,6 +17,7 @@ az login               # or set FOUNDRY_API_KEY for key-based auth
 ## Usage
 
 ```bash
+python scripts/smoke_test.py     # pre-flight: endpoint, auth, deployment names
 python main.py                  # full pipeline -> digest to stdout + data/digest.md
 python main.py --no-ai          # deterministic only, zero LLM calls
 python main.py --collect-only   # raw PR records as JSON
