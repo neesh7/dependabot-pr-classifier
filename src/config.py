@@ -14,8 +14,7 @@ class Config:
     foundry_resource: str = ""  # Microsoft Foundry resource name (or set foundry_endpoint)
     foundry_endpoint: str = ""  # any portal endpoint URL; resource host is derived
     foundry_api_key: str = ""   # blank -> Entra ID (managed identity / az login)
-    foundry_token_scope: str = "https://cognitiveservices.azure.com/.default"
-    azure_api_version: str = "preview"  # /openai/v1/ path; pin a date only if required
+    foundry_token_scope: str = "https://ai.azure.com/.default"
     # Azure *deployment* names, not catalogue model IDs
     model_default: str = "gpt-5.6-sol"
     model_escalation: str = "gpt-5.6-sol"
@@ -43,7 +42,6 @@ def load_config() -> Config:
         foundry_endpoint=os.getenv("FOUNDRY_ENDPOINT", ""),
         foundry_api_key=os.getenv("FOUNDRY_API_KEY", ""),
         foundry_token_scope=os.getenv("FOUNDRY_TOKEN_SCOPE", Config.foundry_token_scope),
-        azure_api_version=os.getenv("AZURE_API_VERSION", Config.azure_api_version),
         model_default=os.getenv("LLM_MODEL_DEFAULT", Config.model_default),
         model_escalation=os.getenv("LLM_MODEL_ESCALATION", Config.model_escalation),
         max_llm_calls_per_run=int(os.getenv("LLM_MAX_CALLS_PER_RUN", "100")),

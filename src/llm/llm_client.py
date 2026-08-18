@@ -11,6 +11,7 @@ import re
 import sys
 from collections.abc import Callable
 
+import httpx
 import openai
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -45,6 +46,23 @@ def _entra_token_provider(scope: str) -> Callable[[], str]:
     return get_bearer_token_provider(DefaultAzureCredential(), scope)
 
 
+class _EntraAuth(httpx.Auth):
+    """Put a fresh Entra bearer token on every request.
+
+    The plain OpenAI client takes only a static api_key string, and AzureOpenAI —
+    which does support a token provider — appends ?api-version=..., which the
+    Foundry /openai/v1 route rejects with 404. Doing it at the transport layer
+    keeps the correct URL and still refreshes the token per request.
+    """
+
+    def __init__(self, token_provider: Callable[[], str]):
+        self._token_provider = token_provider
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self._token_provider()}"
+        yield request
+
+
 def _needs_human(reason: str) -> Verdict:
     return Verdict(verdict="NEEDS_HUMAN", recommended_action="manual review",
                    risk_of_newer_version="medium", reasoning=reason)
@@ -56,14 +74,14 @@ class LLMClient:
         if not resource:
             sys.exit("Set FOUNDRY_ENDPOINT (or FOUNDRY_RESOURCE) — expected a "
                      "https://<resource>.services.ai.azure.com/... URL")
-        key = config.foundry_api_key or None
-        self._client = openai.AzureOpenAI(
-            base_url=f"https://{resource}.services.ai.azure.com/openai/v1/",
-            api_version=config.azure_api_version,
-            api_key=key,
-            # mutually exclusive with api_key — pass exactly one
-            azure_ad_token_provider=(None if key else
-                                     _entra_token_provider(config.foundry_token_scope)),
+        key = config.foundry_api_key
+        # keyless: the transport stamps a fresh bearer token on every request instead
+        http_client = None if key else httpx.Client(
+            auth=_EntraAuth(_entra_token_provider(config.foundry_token_scope)), timeout=60)
+        self._client = openai.OpenAI(
+            base_url=f"https://{resource}.services.ai.azure.com/openai/v1",
+            api_key=key or "entra-id",  # placeholder; _EntraAuth overwrites the header
+            http_client=http_client,
         )
         self._config = config
         self._executor = executor or ToolExecutor(config.github_token)

@@ -51,9 +51,9 @@ def test_foundry_uses_api_key_and_never_asks_for_a_token(monkeypatch):
     llm = llm_client.LLMClient(_foundry_config(foundry_api_key="k"),
                                executor=object())
     assert llm._client.api_key == "k"
-    assert llm._client._azure_ad_token_provider is None
-    assert str(llm._client.base_url).startswith(
-        "https://my-res.services.ai.azure.com/openai/v1")
+    assert str(llm._client.base_url).rstrip("/").endswith("/openai/v1")
+    # no ?api-version=... — the Foundry v1 route 404s when it is appended
+    assert "api-version" not in str(llm._client.base_url)
 
 
 def test_blank_foundry_key_falls_back_to_entra_id(monkeypatch):
@@ -62,10 +62,19 @@ def test_blank_foundry_key_falls_back_to_entra_id(monkeypatch):
     monkeypatch.setattr(llm_client, "_entra_token_provider",
                         lambda scope: asked.append(scope) or (lambda: "tok"))
     llm = llm_client.LLMClient(_foundry_config(), executor=object())
-    assert asked == ["https://cognitiveservices.azure.com/.default"]  # default scope
-    # SDK sentinel: no key was supplied, so requests authenticate with the bearer token
-    assert llm._client.api_key == "<missing API key>"
-    assert llm._client._azure_ad_token_provider() == "tok"
+    assert asked == ["https://ai.azure.com/.default"]  # Foundry v1 audience
+    assert isinstance(llm._client._client.auth, llm_client._EntraAuth)
+
+
+def test_entra_auth_refreshes_the_token_every_request():
+    import httpx
+    from src.llm.llm_client import _EntraAuth
+    tokens = iter(["t1", "t2"])
+    auth = _EntraAuth(lambda: next(tokens))
+    for expected in ("t1", "t2"):
+        req = httpx.Request("POST", "https://x/openai/v1/chat/completions")
+        next(auth.auth_flow(req))
+        assert req.headers["Authorization"] == f"Bearer {expected}"
 
 
 def test_entra_scope_is_overridable(monkeypatch):

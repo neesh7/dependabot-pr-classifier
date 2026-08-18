@@ -25,6 +25,10 @@ def _diagnose(exc: Exception) -> str:
     """Map the usual Azure failures onto the thing you actually have to fix."""
     import openai
     text = str(exc)
+    if "PermissionDenied" in text or isinstance(exc, openai.PermissionDeniedError):
+        return ("authenticated, but this identity has no data-plane access — assign "
+                "Cognitive Services OpenAI User on the resource. Subscription Owner is "
+                "a control-plane role and does NOT grant it")
     if isinstance(exc, openai.NotFoundError) or "DeploymentNotFound" in text:
         return ("deployment name not found on this resource — check the exact name under "
                 "Models + endpoints in the Foundry portal (it is the deployment name, "
@@ -32,9 +36,7 @@ def _diagnose(exc: Exception) -> str:
     if isinstance(exc, openai.AuthenticationError) or " 401" in text:
         return ("auth rejected — with a key: copy a current one from Keys and Endpoint; "
                 "keyless: run az login and check the role assignment has propagated")
-    if isinstance(exc, openai.PermissionDeniedError) or " 403" in text:
-        return ("authenticated but not authorised — assign Cognitive Services OpenAI User "
-                "on the resource to this identity")
+
     if isinstance(exc, openai.RateLimitError):
         return "rate limited or out of quota — raise the deployment TPM quota"
     if isinstance(exc, openai.APIConnectionError):
@@ -82,13 +84,13 @@ def main() -> int:
         github_token="", repos=[],           # unused here
         foundry_resource=resource, foundry_api_key=key,
         foundry_token_scope=os.getenv("FOUNDRY_TOKEN_SCOPE", Config.foundry_token_scope),
-        azure_api_version=os.getenv("AZURE_API_VERSION", Config.azure_api_version),
     )
 
     print(f"Resource:   {resource}")
-    print(f"Base URL:   https://{resource}.services.ai.azure.com/openai/v1/")
-    print(f"API version: {config.azure_api_version}")
+    print(f"Base URL:   https://{resource}.services.ai.azure.com/openai/v1")
     print(f"Auth:       {'resource key' if key else 'Entra ID (DefaultAzureCredential)'}")
+    if not key:
+        print(f"Scope:      {config.foundry_token_scope}")
 
     deployments = args.deployment or list(dict.fromkeys(
         [os.getenv("LLM_MODEL_DEFAULT", Config.model_default),

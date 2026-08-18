@@ -26,7 +26,22 @@ Two mutually exclusive modes, chosen by whether `FOUNDRY_API_KEY` is set:
 | `FOUNDRY_API_KEY` | Auth | Use |
 |---|---|---|
 | set | resource API key | local testing |
-| blank | Entra ID via `DefaultAzureCredential` | client env (managed identity), and `az login` locally |
+| blank | Entra ID via `DefaultAzureCredential`, stamped per request by `_EntraAuth` | client env (managed identity), and `az login` locally |
+
+Token scope is `https://ai.azure.com/.default` (the Foundry v1 audience), overridable
+with `FOUNDRY_TOKEN_SCOPE`.
+
+**RBAC is the step people miss.** Inference needs data actions such as
+`Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action`,
+which subscription Owner does not include. Assign **Cognitive Services OpenAI User**
+on the resource to every identity that runs the pipeline — your own user locally, the
+Function App managed identity in the client env:
+
+```bash
+az role assignment create --assignee <objectId-or-principalId>   --role "Cognitive Services OpenAI User"   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<resource>
+```
+
+Then verify with `python scripts/smoke_test.py` before running the pipeline.
 
 Keyless requires `azure-identity` (in `requirements.txt`); the import is lazy, so
 key-based runs never need it. The token provider is called on every request and the

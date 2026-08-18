@@ -75,13 +75,23 @@ one file: `src/config.py`.
 
 ## LLM specifics
 
-- **Azure OpenAI only.** `LLMClient` builds `openai.AzureOpenAI` against
-  `https://<resource>.services.ai.azure.com/openai/v1/`, where `<resource>` is derived by
+- **Azure OpenAI only.** `LLMClient` builds a plain `openai.OpenAI` against
+  `https://<resource>.services.ai.azure.com/openai/v1`, where `<resource>` is derived by
   regex from `FOUNDRY_ENDPOINT` (any portal URL works) or set via `FOUNDRY_RESOURCE`.
-- **Auth is key or Entra ID, never both** — the SDK treats them as mutually exclusive. A
-  set `FOUNDRY_API_KEY` is used directly; a blank one builds an `azure_ad_token_provider`
-  from `DefaultAzureCredential` (managed identity in Azure, `az login` locally).
+  **Do not switch to `openai.AzureOpenAI`** — it appends `?api-version=...`, and the
+  Foundry v1 route answers that with `404 Resource not found`.
+- **Auth is key or Entra ID.** A set `FOUNDRY_API_KEY` is passed as the api_key; a blank
+  one installs `_EntraAuth` (an `httpx.Auth`) on the transport, which stamps a fresh
+  `DefaultAzureCredential` bearer token on every request. The transport is used because
+  the plain client only accepts a static key string — passing the token *provider* as
+  `api_key`, as the portal sample does, sends `Bearer <function ...>` and 401s.
   `azure-identity` is imported lazily, so key-based runs never need it.
+- **Token scope is `https://ai.azure.com/.default`**, not the classic
+  `cognitiveservices.azure.com` audience. Override with `FOUNDRY_TOKEN_SCOPE`.
+- **Data-plane RBAC is separate from control plane.** Subscription Owner does *not* grant
+  inference access; the identity needs Cognitive Services OpenAI User on the resource.
+  `scripts/smoke_test.py` distinguishes this (401 PermissionDenied) from a missing
+  deployment (404).
 - **Model names are Azure deployment names**, not catalogue model IDs. `model_default` and
   `model_escalation` may point at the same deployment; escalation then no-ops by design.
 - **Parameter self-healing.** Deployments disagree on `temperature` and
