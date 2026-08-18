@@ -63,6 +63,17 @@ class _EntraAuth(httpx.Auth):
         yield request
 
 
+def public_github_token(config: Config) -> str:
+    """Token for public github.com lookups (release notes, changelogs).
+
+    On github.com the collector token already works. On GHE it does not, so fall
+    back to PUBLIC_GITHUB_TOKEN, or to unauthenticated when that is unset.
+    """
+    if config.github_api_url:
+        return config.public_github_token
+    return config.public_github_token or config.github_token
+
+
 def _needs_human(reason: str) -> Verdict:
     return Verdict(verdict="NEEDS_HUMAN", recommended_action="manual review",
                    risk_of_newer_version="medium", reasoning=reason)
@@ -84,7 +95,7 @@ class LLMClient:
             http_client=http_client,
         )
         self._config = config
-        self._executor = executor or ToolExecutor(config.github_token)
+        self._executor = executor or ToolExecutor(public_github_token(config))
         # deployments disagree on temperature / max_tokens; learned per model at runtime
         self._unsupported: dict[str, set[str]] = {}
         self.api_calls = 0

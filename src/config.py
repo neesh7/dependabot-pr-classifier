@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 class Config:
     github_token: str
     repos: list[str]
+    # GitHub Enterprise server root, e.g. https://ghe.example.com. Blank = github.com.
+    github_api_url: str = ""
+    # Only for GHE: reads public repos for release notes. Blank = unauthenticated.
+    public_github_token: str = ""
     foundry_resource: str = ""  # Microsoft Foundry resource name (or set foundry_endpoint)
     foundry_endpoint: str = ""  # any portal endpoint URL; resource host is derived
     foundry_api_key: str = ""   # blank -> Entra ID (managed identity / az login)
@@ -38,6 +42,8 @@ def load_config() -> Config:
     return Config(
         github_token=token,
         repos=repos,
+        github_api_url=os.getenv("GITHUB_API_URL", "").strip().rstrip("/"),
+        public_github_token=os.getenv("PUBLIC_GITHUB_TOKEN", ""),
         foundry_resource=os.getenv("FOUNDRY_RESOURCE", ""),
         foundry_endpoint=os.getenv("FOUNDRY_ENDPOINT", ""),
         foundry_api_key=os.getenv("FOUNDRY_API_KEY", ""),

@@ -53,10 +53,18 @@ _GITHUB_URL_RE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git|/|$)")
 
 
 class ToolExecutor:
+    """Reads package metadata and release notes.
+
+    These always come from PUBLIC github.com: registry metadata (PyPI/npm/NuGet)
+    points at the upstream project, which does not live on a customer's GHE server.
+    So the token here is a public-GitHub one, not the collector's GHE token; empty
+    means unauthenticated, which GitHub rate-limits to 60 requests/hour.
+    """
+
     def __init__(self, github_token: str):
         self._http = httpx.Client(timeout=20, follow_redirects=True)
-        self._gh = httpx.Client(timeout=20, follow_redirects=True,
-                                headers={"Authorization": f"Bearer {github_token}"})
+        headers = {"Authorization": f"Bearer {github_token}"} if github_token else {}
+        self._gh = httpx.Client(timeout=20, follow_redirects=True, headers=headers)
 
     def execute(self, name: str, args: dict) -> str:
         try:

@@ -72,7 +72,7 @@ def collect(config: Config) -> list[PRRecord]:
     records = []
     with make_client(config.github_token) as client:
         for repo in config.repos:
-            prs = fetch_dependabot_prs(client, repo)
+            prs = fetch_dependabot_prs(client, repo, config.github_api_url)
             records.extend(build_record(repo, pr) for pr in prs)
             log_event("collected", repo=repo, open_prs=len(prs))
     return records

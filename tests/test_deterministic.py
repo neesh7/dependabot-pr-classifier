@@ -127,3 +127,42 @@ def test_partial_group_overlap_is_not_duplicate():
     assert results[10].status == "STALE_CANDIDATE"  # its Redis 2.13 is behind 3.1.13
     assert [o.dependency for o in results[10].duplicate_overlaps] == ["Redis"]
     assert results[16].status == "CURRENT"
+
+
+# ── GitHub Enterprise endpoint plumbing ───────────────────────────────────
+
+def test_endpoints_default_to_github_com():
+    from src.collector.github_client import graphql_url, rest_url
+    assert graphql_url("") == "https://api.github.com/graphql"
+    assert rest_url("") == "https://api.github.com"
+
+
+def test_endpoints_follow_ghe_server_root():
+    from src.collector.github_client import graphql_url, rest_url
+    for root in ("https://ghe.example.com", "https://ghe.example.com/"):
+        assert graphql_url(root) == "https://ghe.example.com/api/graphql"
+        assert rest_url(root) == "https://ghe.example.com/api/v3"
+
+
+def test_public_lookups_reuse_the_token_only_on_github_com():
+    """On GHE the collector token is worthless against public github.com."""
+    from src.config import Config
+    from src.llm.llm_client import public_github_token
+    dotcom = Config(github_token="gh", repos=[])
+    assert public_github_token(dotcom) == "gh"
+
+    ghe = Config(github_token="gh", repos=[], github_api_url="https://ghe.example.com")
+    assert public_github_token(ghe) == ""  # unauthenticated, not the GHE token
+
+    ghe_with_pat = Config(github_token="gh", repos=[],
+                          github_api_url="https://ghe.example.com",
+                          public_github_token="pub")
+    assert public_github_token(ghe_with_pat) == "pub"
+
+
+def test_make_client_omits_auth_header_when_token_is_empty():
+    from src.collector.github_client import make_client
+    with make_client("") as c:
+        assert "Authorization" not in c.headers
+    with make_client("t") as c:
+        assert c.headers["Authorization"] == "Bearer t"

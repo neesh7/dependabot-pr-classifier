@@ -11,11 +11,11 @@ import argparse
 import os
 import sys
 
-from dotenv import load_dotenv
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import Config  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from src.config import Config, load_config  # noqa: E402
 from src.llm.llm_client import LLMClient, _foundry_resource_from  # noqa: E402
 
 OK, BAD = "PASS", "FAIL"
@@ -71,20 +71,14 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):  # Windows consoles default to cp1252
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    load_dotenv()
-    endpoint = os.getenv("FOUNDRY_ENDPOINT", "")
-    resource = os.getenv("FOUNDRY_RESOURCE", "") or _foundry_resource_from(endpoint)
+    config = load_config()  # same .env, same validation as the pipeline
+    resource = config.foundry_resource or _foundry_resource_from(config.foundry_endpoint)
     if not resource:
         print(f"{BAD} no resource: set FOUNDRY_ENDPOINT to a "
               "https://<resource>.services.ai.azure.com/... URL, or FOUNDRY_RESOURCE")
         return 1
-
-    key = os.getenv("FOUNDRY_API_KEY", "")
-    config = Config(
-        github_token="", repos=[],           # unused here
-        foundry_resource=resource, foundry_api_key=key,
-        foundry_token_scope=os.getenv("FOUNDRY_TOKEN_SCOPE", Config.foundry_token_scope),
-    )
+    config = replace(config, foundry_resource=resource)
+    key = config.foundry_api_key
 
     print(f"Resource:   {resource}")
     print(f"Base URL:   https://{resource}.services.ai.azure.com/openai/v1")
@@ -93,8 +87,7 @@ def main() -> int:
         print(f"Scope:      {config.foundry_token_scope}")
 
     deployments = args.deployment or list(dict.fromkeys(
-        [os.getenv("LLM_MODEL_DEFAULT", Config.model_default),
-         os.getenv("LLM_MODEL_ESCALATION", Config.model_escalation)]))
+        [config.model_default, config.model_escalation]))
     print(f"Deployments: {', '.join(deployments)}\n")
 
     ok = all([check(config, d) for d in deployments])  # list: check every one

@@ -10,19 +10,19 @@ The token is never printed. Exit code is 0 only if both checks pass.
     python ghe_token_test.py                    # checks every repo in REPOS
     python ghe_token_test.py -r owner/name      # checks one repo (repeatable)
 
-For GitHub Enterprise, set GITHUB_API_URL to the server root, e.g.
-GITHUB_API_URL=https://ghe.example.com — the /api/graphql and /api/v3 paths are
-derived from it. Unset means github.com.
+Every setting comes from .env via src/config.py — this script defines none of its
+own. For GitHub Enterprise set GITHUB_API_URL there to the server root, e.g.
+https://ghe.example.com; the /api/graphql and /api/v3 paths are derived from it.
+Unset means github.com, and the same value drives the pipeline itself.
 """
 
 import argparse
-import os
 import sys
 
 import httpx
-from dotenv import load_dotenv
 
-from src.collector.github_client import make_client
+from src.collector.github_client import graphql_url, make_client, rest_url
+from src.config import load_config
 
 OK, BAD = "PASS", "FAIL"
 
@@ -43,15 +43,6 @@ query($owner: String!, $name: String!) {
 """
 
 DEPENDABOT_LOGINS = {"dependabot", "dependabot[bot]"}
-
-
-def endpoints() -> tuple[str, str]:
-    """(graphql_url, rest_url) for github.com or a GitHub Enterprise server."""
-    root = os.getenv("GITHUB_API_URL", "").strip().rstrip("/")
-    if not root:
-        return "https://api.github.com/graphql", "https://api.github.com"
-    return f"{root}/api/graphql", f"{root}/api/v3"
-
 
 NO_ACCESS = ("repo does not exist, or the token cannot see it "
              "(private repo without `repo` scope, or no access granted)")
@@ -91,10 +82,10 @@ def _graphql(client: httpx.Client, url: str, query: str, variables: dict | None 
 
 # ── check 1: is the token valid, and as whom? ─────────────────────────────
 
-def check_token(client: httpx.Client, graphql_url: str, rest_url: str) -> bool:
+def check_token(client: httpx.Client, gql: str, rest: str) -> bool:
     print("1. Token check")
     try:
-        data = _graphql(client, graphql_url, VIEWER_QUERY)
+        data = _graphql(client, gql, VIEWER_QUERY)
     except Exception as exc:
         print(f"   {BAD} {_diagnose(exc)}")
         return False
@@ -105,7 +96,7 @@ def check_token(client: httpx.Client, graphql_url: str, rest_url: str) -> bool:
 
     # scopes only exist for classic PATs; fine-grained tokens omit the header
     try:
-        resp = client.get(f"{rest_url}/user")
+        resp = client.get(f"{rest}/user")
         scopes = resp.headers.get("x-oauth-scopes")
         if scopes is None:
             print("        scopes: not reported (fine-grained token or GitHub App)")
@@ -121,20 +112,20 @@ def check_token(client: httpx.Client, graphql_url: str, rest_url: str) -> bool:
 
 # ── check 2: can it actually read the repos we scan? ──────────────────────
 
-def check_repo(client: httpx.Client, graphql_url: str, repo: str) -> bool:
+def check_repo(client: httpx.Client, gql: str, repo: str) -> bool:
     if "/" not in repo:
         print(f"   {BAD} {repo}: expected owner/name")
         return False
     owner, name = repo.split("/", 1)
     try:
-        data = _graphql(client, graphql_url, REPO_QUERY, {"owner": owner, "name": name})
+        data = _graphql(client, gql, REPO_QUERY, {"owner": owner, "name": name})
     except Exception as exc:
         print(f"   {BAD} {repo}: {_diagnose(exc)}")
         return False
 
     r = data.get("repository")
     if r is None:
-        print(f"   {BAD} {repo}: not visible to this token (404 / no access)")
+        print(f"   {BAD} {repo}: {NO_ACCESS}")
         return False
 
     prs = r["pullRequests"]
@@ -156,20 +147,16 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):  # Windows consoles default to cp1252
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    load_dotenv()
-    token = os.getenv("GITHUB_TOKEN", "")
-    if not token:
-        print(f"{BAD} GITHUB_TOKEN is not set (see .env.example)")
-        return 1
+    config = load_config()  # same .env, same validation as the pipeline
+    token = config.github_token
+    gql, rest = graphql_url(config.github_api_url), rest_url(config.github_api_url)
+    repos = args.repo or config.repos
 
-    graphql_url, rest_url = endpoints()
-    repos = args.repo or [r.strip() for r in os.getenv("REPOS", "").split(",") if r.strip()]
-
-    print(f"Endpoint: {graphql_url}")
+    print(f"Endpoint: {gql}")
     print(f"Token:    {len(token)} chars, ending {token[-4:]}\n")
 
     with make_client(token) as client:
-        token_ok = check_token(client, graphql_url, rest_url)
+        token_ok = check_token(client, gql, rest)
 
         print("\n2. Repo discovery check")
         if not token_ok:
@@ -179,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"   {BAD} no repos to check: set REPOS or pass --repo owner/name")
             repos_ok = False
         else:
-            repos_ok = all([check_repo(client, graphql_url, r) for r in repos])
+            repos_ok = all([check_repo(client, gql, r) for r in repos])
 
     ok = token_ok and repos_ok
     print("\nToken is good for this pipeline." if ok else
