@@ -23,13 +23,14 @@ Product spec: `product.md`. Build plan/phases: `PLAN.md`. Azure swap list: `MIGR
 pip install -r requirements.txt
 cp .env.example .env             # GITHUB_TOKEN and REPOS are required; run aborts without them
 
+python ghe_token_test.py         # pre-flight: GitHub token + repo access
 python scripts/smoke_test.py     # pre-flight: endpoint, auth, deployment names
 python main.py                   # full pipeline -> stdout + data/digest.md
 python main.py --no-ai           # deterministic only, zero LLM calls (use while iterating)
 python main.py --collect-only    # raw PR records as JSON
 python main.py --grouped         # PRs grouped by (repo, ecosystem, manifest, dependency)
 
-python -m pytest tests/ -q       # 51 tests, no network or API keys needed
+python -m pytest tests/ -q       # 61 tests, no network or API keys needed
 ```
 
 `main.py` is a two-line shim over `src.main:main`.

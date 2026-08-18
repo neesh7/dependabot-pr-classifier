@@ -17,12 +17,13 @@ az login               # or set FOUNDRY_API_KEY for key-based auth
 ## Usage
 
 ```bash
+python ghe_token_test.py        # pre-flight: GitHub token + repo access
 python scripts/smoke_test.py     # pre-flight: endpoint, auth, deployment names
 python main.py                  # full pipeline -> digest to stdout + data/digest.md
 python main.py --no-ai          # deterministic only, zero LLM calls
 python main.py --collect-only   # raw PR records as JSON
 python main.py --grouped        # PRs grouped by (repo, ecosystem, manifest, dependency)
-pytest                          # 60 tests, no network/API needed
+pytest                          # 61 tests, no network/API needed
 ```
 
 Outputs: `data/digest.md` (weekly digest), `data/audit_log.jsonl` (append-only verdict log), `data/verdict_cache.json` (cross-repo AI cache).
