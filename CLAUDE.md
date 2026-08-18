@@ -6,8 +6,11 @@ Guidance for Claude Code working in this repository.
 
 AI-powered triage for Dependabot PRs across many repos. It collects open Dependabot
 PRs (GitHub GraphQL), parses them into structured records, classifies them
-deterministically, sends only the ambiguous ones to Claude for a verdict, and emits a
+deterministically, sends only the ambiguous ones to the model for a verdict, and emits a
 Markdown digest plus an append-only audit log.
+
+This branch is the **Microsoft-native** build: GPT deployments on Azure OpenAI
+(Foundry resource), Entra ID auth, Azure Functions. There is no Anthropic code path.
 
 **v1 is report-only.** It never comments on, closes, or merges a PR. Do not add write
 paths to GitHub without an explicit request.
@@ -21,7 +24,7 @@ pip install -r requirements.txt
 cp .env.example .env             # GITHUB_TOKEN and REPOS are required; run aborts without them
 
 python main.py                   # full pipeline -> stdout + data/digest.md
-python main.py --no-ai           # deterministic only, zero Claude calls (use while iterating)
+python main.py --no-ai           # deterministic only, zero LLM calls (use while iterating)
 python main.py --collect-only    # raw PR records as JSON
 python main.py --grouped         # PRs grouped by (repo, ecosystem, manifest, dependency)
 
@@ -33,7 +36,7 @@ python -m pytest tests/ -q       # 51 tests, no network or API keys needed
 ## Pipeline
 
 ```
-collector → deterministic classifier → Claude node (STALE_CANDIDATE only) → digest
+collector → deterministic classifier → GPT node (STALE_CANDIDATE only) → digest
 ```
 
 | Stage | Module | Notes |
@@ -41,7 +44,7 @@ collector → deterministic classifier → Claude node (STALE_CANDIDATE only) �
 | Collect | `src/collector/github_client.py`, `pr_parser.py` | GraphQL + pagination; parses bump / requirement / group / monorepo-path titles and grouped-PR bodies |
 | Classify | `src/classifier/deterministic.py` | Tags `CURRENT` / `DUPLICATE` / `STALE_CANDIDATE` / `UNKNOWN` with zero AI |
 | Lookups | `registry_client.py` (PyPI, npm, NuGet), `osv_client.py` (batch CVE) | Stable releases only; pre-releases excluded |
-| AI verdict | `src/llm/llm_client.py`, `prompts.py`, `tools.py` | `SUPERSEDED` / `STILL_VALID` / `NEEDS_HUMAN` |
+| AI verdict | `src/llm/llm_client.py`, `prompts.py`, `tools.py` | Azure OpenAI chat completions + tool loop → `SUPERSEDED` / `STILL_VALID` / `NEEDS_HUMAN` |
 | Persist | `src/storage/verdict_cache.py`, `audit_log.py` | Cross-repo cache; one JSON line per verdict |
 | Report | `src/report/digest.py` | Markdown digest + Teams webhook payload |
 
@@ -52,13 +55,13 @@ one file: `src/config.py`.
 
 1. **Repo is the isolation boundary.** Duplicate detection only ever compares PRs within
    the same `(repo, manifest_path, dependency)`. Never across repos.
-2. **Only `src/llm/llm_client.py` imports the `anthropic` SDK.** It is the single
-   abstraction boundary for both providers. Nothing else touches the SDK.
-3. **Deterministic first.** Claude only sees `STALE_CANDIDATE` records. If a check can be
-   made from registry/OSV data, it belongs in `deterministic.py`, not the prompt.
+2. **Only `src/llm/llm_client.py` imports the `openai` SDK.** It is the single
+   abstraction boundary. Nothing else touches the SDK, and nothing imports `anthropic`.
+3. **Deterministic first.** The model only sees `STALE_CANDIDATE` records. If a check can
+   be made from registry/OSV data, it belongs in `deterministic.py`, not the prompt.
 4. **All AI tools are read-only** (`fetch_release_notes`, `lookup_cve`,
    `fetch_file_from_repo`) and every result is size-capped. Max 5 tool iterations per PR,
-   then a final answer is forced via `tool_choice: none`.
+   then a final answer is forced via `tool_choice="none"`.
 5. **Never guess.** Thin or ambiguous evidence must return `NEEDS_HUMAN`. A wrong
    confident verdict is worse than deferring.
 6. **Schema-validated output.** Every verdict passes `Verdict.model_validate_json`; one
@@ -71,23 +74,31 @@ one file: `src/config.py`.
 
 ## LLM specifics
 
-- Provider switch: `LLM_PROVIDER=anthropic` (local) or `foundry` (Claude in Microsoft
-  Foundry). Foundry accepts `FOUNDRY_ENDPOINT` (any portal URL — the resource host is
-  derived by regex) or `FOUNDRY_RESOURCE`. Foundry auth is key **or** Entra ID, never
-  both: a set `FOUNDRY_API_KEY` is used directly; a blank one builds an
-  `azure_ad_token_provider` from `DefaultAzureCredential` (managed identity in Azure,
-  `az login` locally). `azure-identity` is imported lazily, so key-based runs don't need it.
-- Model routing: `model_default` (Haiku) for routine gaps; `model_escalation` (Sonnet) for
-  grouped PRs or major-version gaps, plus a one-shot escalation when the default model
-  returns `NEEDS_HUMAN` and budget remains.
-- Claude 5 models reject `temperature`; the client detects the `BadRequestError`, caches the
-  model in `_no_temperature`, and retries without it. Keep that fallback intact.
-- Verdict cache key: `(ecosystem, dependency, to_ver, latest_ver, PROMPT_VERSION)`. **Bump
-  `PROMPT_VERSION` in `src/llm/prompts.py` whenever you change the prompt** — otherwise
-  stale verdicts are served from cache.
-- Token counts (`input_tokens` / `output_tokens`), API calls, and cache hits are tracked on
-  the client, surfaced in `RunStats`, the digest, and the structured logs. Keep new call
-  sites accounted for.
+- **Azure OpenAI only.** `LLMClient` builds `openai.AzureOpenAI` against
+  `https://<resource>.services.ai.azure.com/openai/v1/`, where `<resource>` is derived by
+  regex from `FOUNDRY_ENDPOINT` (any portal URL works) or set via `FOUNDRY_RESOURCE`.
+- **Auth is key or Entra ID, never both** — the SDK treats them as mutually exclusive. A
+  set `FOUNDRY_API_KEY` is used directly; a blank one builds an `azure_ad_token_provider`
+  from `DefaultAzureCredential` (managed identity in Azure, `az login` locally).
+  `azure-identity` is imported lazily, so key-based runs never need it.
+- **Model names are Azure deployment names**, not catalogue model IDs. `model_default` and
+  `model_escalation` may point at the same deployment; escalation then no-ops by design.
+- **Parameter self-healing.** Deployments disagree on `temperature` and
+  `max_tokens`/`max_completion_tokens`. `_adapt()` drops or renames the rejected param on a
+  `BadRequestError` and records it in `_unsupported[model]`, so each param is adapted once
+  per deployment and every later call skips it. Keep this — it is what makes one code path
+  work across model generations.
+- **Tool loop shapes** (OpenAI, not Anthropic): tools are
+  `{"type": "function", "function": {...}}`; continue while `message.tool_calls` is
+  non-empty; append the assistant message verbatim via `model_dump(exclude_none=True)`;
+  reply with `{"role": "tool", "tool_call_id": ...}` per call. Tool arguments arrive as a
+  JSON *string* — malformed JSON is returned to the model as text, never raised.
+- **Verdict cache key**: `(ecosystem, dependency, to_ver, latest_ver, PROMPT_VERSION)`.
+  **Bump `PROMPT_VERSION` in `src/llm/prompts.py` whenever you change the prompt** —
+  otherwise stale verdicts are served. It is at `2.0-gpt`; the bump retired the
+  Claude-era entries, since the key does not include the model.
+- **Token counts** come from `usage.prompt_tokens` / `usage.completion_tokens` and feed
+  `RunStats`, the digest, and the structured logs. Keep new call sites accounted for.
 
 ## Conventions
 

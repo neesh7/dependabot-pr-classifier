@@ -11,14 +11,14 @@ from dotenv import load_dotenv
 class Config:
     github_token: str
     repos: list[str]
-    llm_provider: str = "anthropic"
-    anthropic_api_key: str = ""
     foundry_resource: str = ""  # Microsoft Foundry resource name (or set foundry_endpoint)
     foundry_endpoint: str = ""  # any portal endpoint URL; resource host is derived
     foundry_api_key: str = ""   # blank -> Entra ID (managed identity / az login)
     foundry_token_scope: str = "https://cognitiveservices.azure.com/.default"
-    model_default: str = "claude-haiku-4-5-20251001"
-    model_escalation: str = "claude-sonnet-5"
+    azure_api_version: str = "preview"  # /openai/v1/ path; pin a date only if required
+    # Azure *deployment* names, not catalogue model IDs
+    model_default: str = "gpt-5.6-sol"
+    model_escalation: str = "gpt-5.6-sol"
     max_llm_calls_per_run: int = 100
     max_tool_iterations: int = 5
     audit_log_path: str = "data/audit_log.jsonl"
@@ -39,12 +39,11 @@ def load_config() -> Config:
     return Config(
         github_token=token,
         repos=repos,
-        llm_provider=os.getenv("LLM_PROVIDER", "anthropic"),
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         foundry_resource=os.getenv("FOUNDRY_RESOURCE", ""),
         foundry_endpoint=os.getenv("FOUNDRY_ENDPOINT", ""),
         foundry_api_key=os.getenv("FOUNDRY_API_KEY", ""),
         foundry_token_scope=os.getenv("FOUNDRY_TOKEN_SCOPE", Config.foundry_token_scope),
+        azure_api_version=os.getenv("AZURE_API_VERSION", Config.azure_api_version),
         model_default=os.getenv("LLM_MODEL_DEFAULT", Config.model_default),
         model_escalation=os.getenv("LLM_MODEL_ESCALATION", Config.model_escalation),
         max_llm_calls_per_run=int(os.getenv("LLM_MAX_CALLS_PER_RUN", "100")),

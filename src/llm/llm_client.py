@@ -1,7 +1,9 @@
-"""THE abstraction boundary for Claude. Nothing else imports the anthropic SDK.
+"""THE abstraction boundary for the LLM. Nothing else imports the openai SDK.
 
-Provider switch: LLM_PROVIDER=anthropic (local) | foundry (client env — same
-Messages API against a Foundry resource, authenticated by key or Entra ID).
+Azure OpenAI on a Foundry resource (https://<res>.services.ai.azure.com/openai/v1/),
+authenticated by resource key or, when FOUNDRY_API_KEY is blank, Entra ID.
+
+Model names here are Azure *deployment* names, not catalogue model IDs.
 """
 
 import json
@@ -9,7 +11,7 @@ import re
 import sys
 from collections.abc import Callable
 
-import anthropic
+import openai
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.classifier.versions import is_major_gap
@@ -19,6 +21,7 @@ from src.llm.tools import TOOL_DEFINITIONS, ToolExecutor
 from src.schemas import ClassifiedPR, Verdict, VerdictMeta
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+MAX_OUTPUT_TOKENS = 2048
 
 
 def _foundry_resource_from(endpoint: str) -> str | None:
@@ -29,7 +32,7 @@ def _foundry_resource_from(endpoint: str) -> str | None:
 
 
 def _entra_token_provider(scope: str) -> Callable[[], str]:
-    """Keyless Foundry auth: managed identity in Azure, az login / env vars locally.
+    """Keyless auth: managed identity in Azure, az login / env vars locally.
 
     The SDK invokes this on every request, so DefaultAzureCredential handles the
     caching and refresh. Imported lazily — azure-identity is only needed keyless.
@@ -37,7 +40,7 @@ def _entra_token_provider(scope: str) -> Callable[[], str]:
     try:
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
     except ImportError:
-        sys.exit("Keyless Foundry auth needs azure-identity (pip install azure-identity), "
+        sys.exit("Keyless auth needs azure-identity (pip install azure-identity), "
                  "or set FOUNDRY_API_KEY")
     return get_bearer_token_provider(DefaultAzureCredential(), scope)
 
@@ -49,29 +52,23 @@ def _needs_human(reason: str) -> Verdict:
 
 class LLMClient:
     def __init__(self, config: Config, executor: ToolExecutor | None = None):
-        if config.llm_provider == "anthropic":
-            if not config.anthropic_api_key:
-                sys.exit("ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic")
-            self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-        elif config.llm_provider == "foundry":
-            # Claude in Microsoft Foundry — same Messages API surface.
-            # Key locally; blank key -> Entra ID managed identity (see MIGRATION.md).
-            resource = config.foundry_resource or _foundry_resource_from(config.foundry_endpoint)
-            if not resource:
-                sys.exit("Set FOUNDRY_ENDPOINT (or FOUNDRY_RESOURCE) when LLM_PROVIDER=foundry")
-            key = config.foundry_api_key or None
-            self._client = anthropic.AnthropicFoundry(
-                resource=resource,
-                api_key=key,
-                # mutually exclusive with api_key — pass exactly one
-                azure_ad_token_provider=(None if key else
-                                         _entra_token_provider(config.foundry_token_scope)),
-            )
-        else:
-            sys.exit(f"Unknown LLM_PROVIDER: {config.llm_provider}")
+        resource = config.foundry_resource or _foundry_resource_from(config.foundry_endpoint)
+        if not resource:
+            sys.exit("Set FOUNDRY_ENDPOINT (or FOUNDRY_RESOURCE) — expected a "
+                     "https://<resource>.services.ai.azure.com/... URL")
+        key = config.foundry_api_key or None
+        self._client = openai.AzureOpenAI(
+            base_url=f"https://{resource}.services.ai.azure.com/openai/v1/",
+            api_version=config.azure_api_version,
+            api_key=key,
+            # mutually exclusive with api_key — pass exactly one
+            azure_ad_token_provider=(None if key else
+                                     _entra_token_provider(config.foundry_token_scope)),
+        )
         self._config = config
         self._executor = executor or ToolExecutor(config.github_token)
-        self._no_temperature: set[str] = set()  # Claude 5 models reject the param
+        # deployments disagree on temperature / max_tokens; learned per model at runtime
+        self._unsupported: dict[str, set[str]] = {}
         self.api_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -81,9 +78,9 @@ class LLMClient:
     def analyze(self, cp: ClassifiedPR) -> tuple[Verdict, VerdictMeta]:
         model = self.choose_model(cp)
         verdict, meta = self._run(model, cp)
-        # escalate a default-model NEEDS_HUMAN once, if budget remains
+        # escalate a default-model NEEDS_HUMAN once, if a bigger deployment exists
         if (verdict.verdict == "NEEDS_HUMAN" and model == self._config.model_default
-                and not self._over_budget()):
+                and self._config.model_escalation != model and not self._over_budget()):
             verdict2, meta2 = self._run(self._config.model_escalation, cp)
             meta2.input_tokens += meta.input_tokens
             meta2.output_tokens += meta.output_tokens
@@ -101,30 +98,70 @@ class LLMClient:
     def _over_budget(self) -> bool:
         return self.api_calls >= self._config.max_llm_calls_per_run
 
+    def _tuning_kwargs(self, model: str) -> dict:
+        """temperature + an output cap, minus whatever this deployment has rejected."""
+        skip = self._unsupported.get(model, set())
+        kwargs: dict = {}
+        if "temperature" not in skip:
+            kwargs["temperature"] = 0
+        if "max_completion_tokens" not in skip:
+            kwargs["max_completion_tokens"] = MAX_OUTPUT_TOKENS
+        elif "max_tokens" not in skip:
+            kwargs["max_tokens"] = MAX_OUTPUT_TOKENS
+        return kwargs
+
+    def _adapt(self, model: str, kwargs: dict, exc: openai.BadRequestError) -> bool:
+        """Drop or rename one rejected param and retry; each is adapted once per model.
+
+        Reasoning deployments reject temperature, and max_tokens vs
+        max_completion_tokens depends on the model generation.
+        """
+        msg = str(exc)
+        skip = self._unsupported.setdefault(model, set())
+        for param, replacement in (("temperature", None),
+                                   ("max_completion_tokens", "max_tokens"),
+                                   ("max_tokens", "max_completion_tokens")):
+            if param in msg and param in kwargs and param not in skip:
+                skip.add(param)
+                value = kwargs.pop(param)
+                if replacement and replacement not in skip:
+                    kwargs[replacement] = value
+                return True
+        return False
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, max=30),
            retry=retry_if_exception_type(
-               (anthropic.RateLimitError, anthropic.InternalServerError,
-                anthropic.APIConnectionError)),
+               (openai.RateLimitError, openai.InternalServerError,
+                openai.APIConnectionError)),
            reraise=True)
-    def _create(self, model: str, messages: list, tool_choice: dict | None = None):
+    def _create(self, model: str, messages: list, tool_choice: str | None = None):
         self.api_calls += 1
-        kwargs = dict(model=model, max_tokens=2048, system=SYSTEM_PROMPT,
-                      tools=TOOL_DEFINITIONS, messages=messages)
+        kwargs = dict(model=model, messages=messages, tools=TOOL_DEFINITIONS,
+                      **self._tuning_kwargs(model))
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
-        if model not in self._no_temperature:
-            kwargs["temperature"] = 0
-        try:
-            resp = self._client.messages.create(**kwargs)
-        except anthropic.BadRequestError as exc:
-            if "temperature" not in str(exc) or model in self._no_temperature:
-                raise
-            self._no_temperature.add(model)
-            kwargs.pop("temperature", None)
-            resp = self._client.messages.create(**kwargs)
-        self.input_tokens += resp.usage.input_tokens
-        self.output_tokens += resp.usage.output_tokens
+        while True:
+            try:
+                resp = self._client.chat.completions.create(**kwargs)
+                break
+            except openai.BadRequestError as exc:
+                if not self._adapt(model, kwargs, exc):
+                    raise
+        if resp.usage:  # absent on some filtered/error-shaped responses
+            self.input_tokens += resp.usage.prompt_tokens
+            self.output_tokens += resp.usage.completion_tokens
         return resp
+
+    def _tool_results(self, message) -> list[dict]:
+        results = []
+        for call in message.tool_calls:
+            try:
+                args = json.loads(call.function.arguments or "{}")
+                content = self._executor.execute(call.function.name, args)
+            except json.JSONDecodeError as exc:
+                content = f"Tool error: arguments were not valid JSON ({exc})"
+            results.append({"role": "tool", "tool_call_id": call.id, "content": content})
+        return results
 
     def _run(self, model: str, cp: ClassifiedPR) -> tuple[Verdict, VerdictMeta]:
         meta = VerdictMeta(model=model, prompt_version=PROMPT_VERSION)
@@ -132,7 +169,8 @@ class LLMClient:
             return _needs_human(
                 f"LLM call cap ({self._config.max_llm_calls_per_run}) reached this run."), meta
 
-        messages = [{"role": "user", "content": build_user_message(cp)}]
+        messages: list = [{"role": "system", "content": SYSTEM_PROMPT},
+                          {"role": "user", "content": build_user_message(cp)}]
         tokens_before = (self.input_tokens, self.output_tokens)
 
         for iteration in range(self._config.max_tool_iterations + 1):
@@ -141,24 +179,20 @@ class LLMClient:
             if force_final:
                 messages.append({"role": "user", "content":
                                  "Tool budget exhausted. Give your final JSON verdict now."})
-            resp = self._create(model, messages,
-                                tool_choice={"type": "none"} if force_final else None)
+            resp = self._create(model, messages, tool_choice="none" if force_final else None)
             meta.tool_iterations = iteration
-            if resp.stop_reason != "tool_use":
+            message = resp.choices[0].message
+            if not message.tool_calls:
                 break
-            messages.append({"role": "assistant", "content": resp.content})
-            results = [{"type": "tool_result", "tool_use_id": block.id,
-                        "content": self._executor.execute(block.name, block.input)}
-                       for block in resp.content if block.type == "tool_use"]
-            messages.append({"role": "user", "content": results})
+            messages.append(message.model_dump(exclude_none=True))
+            messages.extend(self._tool_results(message))
 
-        text = "".join(b.text for b in resp.content if b.type == "text")
-        verdict = self._parse_verdict(model, messages, resp, text)
+        verdict = self._parse_verdict(model, messages, message.content or "")
         meta.input_tokens = self.input_tokens - tokens_before[0]
         meta.output_tokens = self.output_tokens - tokens_before[1]
         return verdict, meta
 
-    def _parse_verdict(self, model: str, messages: list, resp, text: str) -> Verdict:
+    def _parse_verdict(self, model: str, messages: list, text: str) -> Verdict:
         """Validate the JSON answer; on failure, ONE retry with the error fed back."""
         for attempt in range(2):
             m = _JSON_RE.search(text)
@@ -167,12 +201,12 @@ class LLMClient:
             except Exception as exc:
                 if attempt == 1 or self._over_budget():
                     return _needs_human(f"Model output failed schema validation: {exc}")
-                messages.append({"role": "assistant", "content": resp.content})
+                messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content":
                                  f"Your response failed validation: {exc}. "
                                  "Reply with ONLY the corrected JSON object."})
-                resp = self._create(model, messages, tool_choice={"type": "none"})
-                text = "".join(b.text for b in resp.content if b.type == "text")
+                resp = self._create(model, messages, tool_choice="none")
+                text = resp.choices[0].message.content or ""
         return _needs_human("unreachable")
 
 

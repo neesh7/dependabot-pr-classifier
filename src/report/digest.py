@@ -27,7 +27,7 @@ Nothing needs a human this week.
 {% if stats %}
 ## Token usage
 - Total tokens this run: **{{ "{:,}".format(stats.total_tokens) }}** ({{ "{:,}".format(stats.input_tokens) }} in / {{ "{:,}".format(stats.output_tokens) }} out){% if stats.model %} on `{{ stats.model }}`{% endif %}
-- Claude API calls: **{{ stats.api_calls }}** | Stale PRs analyzed: **{{ stats.stale_analyzed }}** | Cache hits: **{{ stats.cache_hits }}** (reused prior verdicts, 0 tokens)
+- LLM API calls: **{{ stats.api_calls }}** | Stale PRs analyzed: **{{ stats.stale_analyzed }}** | Cache hits: **{{ stats.cache_hits }}** (reused prior verdicts, 0 tokens)
 {% endif %}
 ## Cross-repo rollup
 {% for line in rollup -%}

@@ -3,7 +3,7 @@
 DependencyUpdate — one dependency bump (a grouped PR has several)
 ParsedTitle      — what pr_parser extracts from a PR title
 PRRecord         — collector output (one open Dependabot PR, fully structured)
-Verdict          — Claude's structured answer for a STALE_CANDIDATE (Phase 3)
+Verdict          — the model's structured answer for a STALE_CANDIDATE (Phase 3)
 """
 
 from typing import Literal
@@ -109,7 +109,7 @@ class ClassifiedPR(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Schema Claude must return. Parsed with model_validate_json; one retry on failure."""
+    """Schema the model must return. Parsed with model_validate_json; one retry on failure."""
 
     verdict: Literal["SUPERSEDED", "STILL_VALID", "NEEDS_HUMAN"]
     recommended_action: str  # "recreate to 4.18.2" | "merge as-is" | "manual review"

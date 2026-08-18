@@ -1,5 +1,7 @@
-"""Read-only tools for the Claude tool-use loop. Errors are returned as strings
-so the model can adapt instead of the run crashing."""
+"""Read-only tools for the model tool-use loop. Errors are returned as strings
+so the model can adapt instead of the run crashing.
+
+Schema is the OpenAI function-calling shape: {"type": "function", "function": {...}}."""
 
 import re
 
@@ -10,44 +12,41 @@ from src.classifier.versions import sort_key
 MAX_FILE_CHARS = 20_000
 MAX_NOTES_CHARS = 6_000
 
+def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {"type": "function", "function": {
+        "name": name,
+        "description": description,
+        "parameters": {"type": "object", "properties": properties,
+                       "required": required, "additionalProperties": False},
+    }}
+
+
 TOOL_DEFINITIONS = [
-    {
-        "name": "fetch_release_notes",
-        "description": "Fetch GitHub release notes for a package covering the gap between "
-                       "two versions. Use to judge breaking changes and fixes in the gap.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "package": {"type": "string"},
-                "ecosystem": {"type": "string", "enum": ["npm", "pip", "nuget"]},
-                "from_ver": {"type": "string", "description": "lower bound (exclusive)"},
-                "to_ver": {"type": "string", "description": "upper bound (inclusive)"},
-            },
-            "required": ["package", "ecosystem", "from_ver", "to_ver"],
+    _tool(
+        "fetch_release_notes",
+        "Fetch GitHub release notes for a package covering the gap between "
+        "two versions. Use to judge breaking changes and fixes in the gap.",
+        {
+            "package": {"type": "string"},
+            "ecosystem": {"type": "string", "enum": ["npm", "pip", "nuget"]},
+            "from_ver": {"type": "string", "description": "lower bound (exclusive)"},
+            "to_ver": {"type": "string", "description": "upper bound (inclusive)"},
         },
-    },
-    {
-        "name": "lookup_cve",
-        "description": "Look up one vulnerability by ID (CVE-... or GHSA-...) on OSV.dev.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"vuln_id": {"type": "string"}},
-            "required": ["vuln_id"],
-        },
-    },
-    {
-        "name": "fetch_file_from_repo",
-        "description": "Fetch one file from a GitHub repo (e.g. CHANGELOG.md). "
-                       "repo is 'owner/name'. Read-only, size-capped.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "repo": {"type": "string"},
-                "path": {"type": "string"},
-            },
-            "required": ["repo", "path"],
-        },
-    },
+        ["package", "ecosystem", "from_ver", "to_ver"],
+    ),
+    _tool(
+        "lookup_cve",
+        "Look up one vulnerability by ID (CVE-... or GHSA-...) on OSV.dev.",
+        {"vuln_id": {"type": "string"}},
+        ["vuln_id"],
+    ),
+    _tool(
+        "fetch_file_from_repo",
+        "Fetch one file from a GitHub repo (e.g. CHANGELOG.md). "
+        "repo is 'owner/name'. Read-only, size-capped.",
+        {"repo": {"type": "string"}, "path": {"type": "string"}},
+        ["repo", "path"],
+    ),
 ]
 
 _GITHUB_URL_RE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git|/|$)")

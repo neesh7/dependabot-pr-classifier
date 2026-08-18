@@ -4,7 +4,7 @@ import json
 
 from src.schemas import ClassifiedPR, Verdict
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0-gpt"  # bumped with the Azure OpenAI switch: retires Claude-era cache entries
 
 SYSTEM_PROMPT = f"""You are a dependency-update triage analyst. You are given one open \
 Dependabot PR that is STALE: a newer version of at least one of its dependencies exists \

@@ -2,7 +2,7 @@
 
 Key: (ecosystem, dep, to_ver, latest_ver) per dependency + prompt version —
 package-level facts don't depend on the repo, so 14 repos with the same
-axios bump cost 1 Claude call.
+axios bump cost 1 LLM call.
 """
 
 import json

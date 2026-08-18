@@ -1,5 +1,5 @@
-anthropic
-azure-identity     # keyless Foundry auth (Entra ID)
+openai
+azure-identity     # keyless Entra ID auth
 pydantic>=2
 packaging
 httpx

@@ -131,7 +131,7 @@ def run(config: Config | None = None, no_ai: bool = False) -> str:
 
 
 def run_ai(results: list, config: Config) -> RunStats:
-    """Attach Claude verdicts to STALE_CANDIDATEs, via the cross-repo cache."""
+    """Attach model verdicts to STALE_CANDIDATEs, via the cross-repo cache."""
     stale = [c for c in results if c.status == "STALE_CANDIDATE"]
     if not stale:
         return RunStats()
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--grouped", action="store_true",
                         help="output grouped by (repo, ecosystem, manifest, dependency)")
     parser.add_argument("--no-ai", action="store_true",
-                        help="deterministic classification only, zero Claude calls")
+                        help="deterministic classification only, zero LLM calls")
     args = parser.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):  # Windows consoles default to cp1252
