@@ -30,7 +30,7 @@ python main.py --no-ai           # deterministic only, zero LLM calls (use while
 python main.py --collect-only    # raw PR records as JSON
 python main.py --grouped         # PRs grouped by (repo, ecosystem, manifest, dependency)
 
-python -m pytest tests/ -q       # 61 tests, no network or API keys needed
+python -m pytest tests/ -q       # 65 tests, no network or API keys needed
 ```
 
 `main.py` is a two-line shim over `src.main:main`.

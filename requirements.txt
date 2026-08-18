@@ -1,5 +1,6 @@
 openai
 azure-identity     # keyless Entra ID auth
+azure-functions    # Azure Functions runtime (function_app/)
 pydantic>=2
 packaging
 httpx

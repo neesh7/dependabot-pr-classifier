@@ -23,7 +23,7 @@ python main.py                  # full pipeline -> digest to stdout + data/diges
 python main.py --no-ai          # deterministic only, zero LLM calls
 python main.py --collect-only   # raw PR records as JSON
 python main.py --grouped        # PRs grouped by (repo, ecosystem, manifest, dependency)
-pytest                          # 61 tests, no network/API needed
+pytest                          # 65 tests, no network/API needed
 ```
 
 Outputs: `data/digest.md` (weekly digest), `data/audit_log.jsonl` (append-only verdict log), `data/verdict_cache.json` (cross-repo AI cache).
